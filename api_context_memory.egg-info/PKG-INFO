@@ -1,0 +1,18 @@
+Metadata-Version: 2.1
+Name: api-context-memory
+Version: 0.2.0
+Summary: A streamlined library for recording, analyzing, and maintaining context across API interactions
+Home-page: https://github.com/apicontextmemory/api-context-memory
+Author: API Context Memory Team
+Author-email: info@apicontextmemory.com
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.7
+Requires-Dist: requests>=2.25.0
