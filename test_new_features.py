@@ -10,6 +10,7 @@ This module tests:
 
 import time
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import Mock, patch
 
 from api_context_memory import (
@@ -283,7 +284,7 @@ class TestMetrics(unittest.TestCase):
                 response_time_ms=100.0 + i * 10,
                 request_size=100,
                 response_size=500,
-                timestamp="2024-01-01T00:00:00Z"
+                timestamp=datetime.now(timezone.utc).isoformat()
             )
             collector.record(metric)
         

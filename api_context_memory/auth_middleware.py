@@ -11,6 +11,7 @@ This module provides authentication handlers for API requests:
 
 import base64
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Optional
 
@@ -283,7 +284,6 @@ class OAuth2Auth(AuthMiddleware):
                 self._refresh_token = token_data["refresh_token"]
             
             if "expires_in" in token_data:
-                import time
                 self._expires_at = time.time() + token_data["expires_in"]
             
             logger.info("OAuth2 token refreshed successfully")
@@ -300,7 +300,6 @@ class OAuth2Auth(AuthMiddleware):
             return False
         
         if self._expires_at:
-            import time
             # Consider token invalid if it expires within 60 seconds
             return time.time() < (self._expires_at - 60)
         

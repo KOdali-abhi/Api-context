@@ -295,9 +295,20 @@ class RedisStorage(StorageBackend):
         try:
             full_pattern = self._prefixed_key(pattern)
             keys = self.client.keys(full_pattern)
-            # Remove prefix from keys
+            # Remove prefix from keys, handling both string and bytes types
             prefix_len = len(self.prefix)
-            return [k[prefix_len:] if isinstance(k, str) else k.decode()[prefix_len:] for k in keys]
+            result = []
+            for k in keys:
+                try:
+                    if isinstance(k, str):
+                        result.append(k[prefix_len:])
+                    elif isinstance(k, bytes):
+                        result.append(k.decode()[prefix_len:])
+                    else:
+                        result.append(str(k)[prefix_len:])
+                except (AttributeError, UnicodeDecodeError) as e:
+                    logger.warning(f"Could not decode key {k}: {e}")
+            return result
         except Exception as e:
             logger.error(f"Redis list_keys error: {e}")
             return []

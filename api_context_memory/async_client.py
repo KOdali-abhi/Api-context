@@ -37,6 +37,8 @@ class AsyncAPIClient:
         self._auth_middleware = auth_middleware
         self._rate_limiter = rate_limiter
         self._timeout = timeout
+        # aiohttp.ClientSession instance, created lazily via _ensure_session()
+        # and cleaned up via close() or __aexit__
         self._session = None
         logger.info("Initialized async API client")
     

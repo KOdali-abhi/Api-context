@@ -14,6 +14,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Dict, Optional, Tuple
+from urllib.parse import urlparse
 
 logger = logging.getLogger("api_context_memory.rate_limiter")
 
@@ -224,7 +225,6 @@ class EndpointRateLimiter(RateLimiter):
     
     def _extract_endpoint(self, url: str) -> str:
         """Extract endpoint identifier from URL."""
-        from urllib.parse import urlparse
         parsed = urlparse(url)
         return f"{parsed.netloc}{parsed.path}"
     
