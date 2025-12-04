@@ -5,16 +5,42 @@ This library provides an intuitive interface for recording, analyzing, and maint
 context across API interactions. It addresses common challenges when working with
 multiple APIs by providing a simple memory layer that helps maintain context,
 debug issues, and optimize API usage patterns.
+
+Features:
+- Multiple storage backends (memory, file, Redis)
+- Authentication middleware (Bearer, API Key, Basic, OAuth2)
+- Rate limiting (Token bucket, Sliding window)
+- Async support with aiohttp
+- Comprehensive metrics and logging
 """
 
 import json
 import logging
 import os
+import time
 import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
 import requests
+
+# Import new modules
+from .storage_backends import StorageBackend, MemoryStorage, FileStorage, RedisStorage, create_storage
+from .auth_middleware import (
+    AuthMiddleware, BearerTokenAuth, APIKeyAuth, BasicAuth,
+    CustomHeaderAuth, OAuth2Auth, ChainedAuth
+)
+from .rate_limiter import (
+    RateLimiter, TokenBucketRateLimiter, SlidingWindowRateLimiter,
+    EndpointRateLimiter, RetryHandler
+)
+from .metrics import (
+    MetricsCollector, RequestMetric, PerformanceTimer,
+    StructuredLogger, get_metrics_collector
+)
+
+if TYPE_CHECKING:
+    from .async_client import AsyncAPIClient
 
 # Configure logging
 logging.basicConfig(
@@ -25,36 +51,36 @@ logger = logging.getLogger("api_context_memory")
 
 
 class Storage:
-    """Storage for API context data."""
+    """
+    Storage wrapper for API context data.
     
-    def __init__(self, storage_type: str = "memory", file_path: Optional[str] = None):
+    This class provides backward compatibility while using the new storage backends.
+    For new code, consider using the storage backends directly.
+    """
+    
+    def __init__(
+        self,
+        storage_type: str = "memory",
+        file_path: Optional[str] = None,
+        redis_config: Optional[Dict[str, Any]] = None
+    ):
         """
         Initialize storage.
         
         Args:
-            storage_type: Type of storage ("memory" or "file")
+            storage_type: Type of storage ("memory", "file", or "redis")
             file_path: Path to file storage (required if storage_type is "file")
+            redis_config: Redis configuration (required if storage_type is "redis")
         """
         self.storage_type = storage_type
         self.file_path = file_path
-        self.data = {}
+        self._backend = create_storage(storage_type, file_path, redis_config)
         
-        if storage_type == "file":
-            if not file_path:
-                raise ValueError("file_path is required for file storage")
-            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r") as f:
-                        self.data = json.load(f)
-                except json.JSONDecodeError:
-                    logger.warning(f"Could not load data from {file_path}, starting with empty storage")
-    
-    def _save_to_file(self):
-        """Save data to file if using file storage."""
-        if self.storage_type == "file" and self.file_path:
-            with open(self.file_path, "w") as f:
-                json.dump(self.data, f)
+        # For backward compatibility, expose data dict for memory storage
+        if storage_type == "memory":
+            self.data = self._backend.data
+        else:
+            self.data = {}
     
     def store(self, key: str, value: Dict[str, Any]) -> bool:
         """
@@ -67,9 +93,7 @@ class Storage:
         Returns:
             bool: True if successful
         """
-        self.data[key] = value
-        self._save_to_file()
-        return True
+        return self._backend.store(key, value)
     
     def retrieve(self, key: str) -> Optional[Dict[str, Any]]:
         """
@@ -81,7 +105,7 @@ class Storage:
         Returns:
             Optional[Dict[str, Any]]: Retrieved data or None if not found
         """
-        return self.data.get(key)
+        return self._backend.retrieve(key)
     
     def update(self, key: str, value: Dict[str, Any]) -> bool:
         """
@@ -94,16 +118,7 @@ class Storage:
         Returns:
             bool: True if successful
         """
-        if key in self.data:
-            if isinstance(self.data[key], dict) and isinstance(value, dict):
-                self.data[key].update(value)
-            else:
-                self.data[key] = value
-        else:
-            self.data[key] = value
-        
-        self._save_to_file()
-        return True
+        return self._backend.update(key, value)
     
     def delete(self, key: str) -> bool:
         """
@@ -115,11 +130,7 @@ class Storage:
         Returns:
             bool: True if successful, False if key not found
         """
-        if key in self.data:
-            del self.data[key]
-            self._save_to_file()
-            return True
-        return False
+        return self._backend.delete(key)
     
     def list_keys(self) -> List[str]:
         """
@@ -128,7 +139,7 @@ class Storage:
         Returns:
             List[str]: List of keys
         """
-        return list(self.data.keys())
+        return self._backend.list_keys()
 
 
 class Session:
@@ -144,7 +155,7 @@ class Session:
         """
         self.session_id = session_id
         self.data = data or {}
-        self.created_at = datetime.utcnow().isoformat()
+        self.created_at = datetime.now(timezone.utc).isoformat()
         self.updated_at = self.created_at
     
     def get(self, key: str, default: Any = None) -> Any:
@@ -169,7 +180,7 @@ class Session:
             value: Value to set
         """
         self.data[key] = value
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()
     
     def delete(self, key: str) -> bool:
         """
@@ -183,14 +194,14 @@ class Session:
         """
         if key in self.data:
             del self.data[key]
-            self.updated_at = datetime.utcnow().isoformat()
+            self.updated_at = datetime.now(timezone.utc).isoformat()
             return True
         return False
     
     def clear(self) -> None:
         """Clear all session data."""
         self.data = {}
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -222,7 +233,7 @@ class Tab:
         self.tab_id = tab_id
         self.session_id = session_id
         self.metadata = metadata or {}
-        self.created_at = datetime.utcnow().isoformat()
+        self.created_at = datetime.now(timezone.utc).isoformat()
         self.updated_at = self.created_at
     
     def to_dict(self) -> Dict[str, Any]:
@@ -242,19 +253,72 @@ class Tab:
 
 
 class APIContextMemory:
-    """Main class for the API Context Memory System."""
+    """
+    Main class for the API Context Memory System.
     
-    def __init__(self, storage_type: str = "memory", file_path: Optional[str] = None):
+    Features:
+    - Multiple storage backends (memory, file, Redis)
+    - Authentication middleware support
+    - Rate limiting
+    - Async client support
+    - Metrics collection
+    """
+    
+    def __init__(
+        self,
+        storage_type: str = "memory",
+        file_path: Optional[str] = None,
+        redis_config: Optional[Dict[str, Any]] = None,
+        auth_middleware: Optional[AuthMiddleware] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        metrics_collector: Optional[MetricsCollector] = None,
+        enable_metrics: bool = True
+    ):
         """
         Initialize the API Context Memory System.
         
         Args:
-            storage_type: Type of storage ("memory" or "file")
+            storage_type: Type of storage ("memory", "file", or "redis")
             file_path: Path to file storage (required if storage_type is "file")
+            redis_config: Redis configuration dict (required if storage_type is "redis")
+            auth_middleware: Optional authentication middleware
+            rate_limiter: Optional rate limiter
+            metrics_collector: Optional custom metrics collector
+            enable_metrics: Enable metrics collection (default True)
         """
-        self.storage = Storage(storage_type, file_path)
+        self.storage = Storage(storage_type, file_path, redis_config)
         self.active_tab_id = None
+        self._auth_middleware = auth_middleware
+        self._rate_limiter = rate_limiter
+        self._metrics_collector = metrics_collector if metrics_collector else (
+            get_metrics_collector() if enable_metrics else None
+        )
         logger.info(f"Initialized API Context Memory with {storage_type} storage")
+    
+    @property
+    def auth_middleware(self) -> Optional[AuthMiddleware]:
+        """Get the authentication middleware."""
+        return self._auth_middleware
+    
+    @auth_middleware.setter
+    def auth_middleware(self, middleware: Optional[AuthMiddleware]):
+        """Set the authentication middleware."""
+        self._auth_middleware = middleware
+    
+    @property
+    def rate_limiter(self) -> Optional[RateLimiter]:
+        """Get the rate limiter."""
+        return self._rate_limiter
+    
+    @rate_limiter.setter
+    def rate_limiter(self, limiter: Optional[RateLimiter]):
+        """Set the rate limiter."""
+        self._rate_limiter = limiter
+    
+    @property
+    def metrics(self) -> Optional[MetricsCollector]:
+        """Get the metrics collector."""
+        return self._metrics_collector
     
     def create_tab(self, tab_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -470,7 +534,7 @@ class APIContextMemory:
         
         interaction = {
             "id": interaction_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "request": request_data,
             "response": response_data
         }
@@ -541,14 +605,69 @@ class APIContextMemory:
         
         return errors
     
-    def create_client(self) -> 'APIClient':
+    def create_client(
+        self,
+        auth_middleware: Optional[AuthMiddleware] = None,
+        rate_limiter: Optional[RateLimiter] = None
+    ) -> 'APIClient':
         """
         Create an API client.
+        
+        Args:
+            auth_middleware: Override auth middleware (uses instance default if None)
+            rate_limiter: Override rate limiter (uses instance default if None)
         
         Returns:
             APIClient: API client object
         """
-        return APIClient(self)
+        return APIClient(
+            self,
+            auth_middleware=auth_middleware or self._auth_middleware,
+            rate_limiter=rate_limiter or self._rate_limiter,
+            metrics_collector=self._metrics_collector
+        )
+    
+    def create_async_client(
+        self,
+        auth_middleware: Optional[AuthMiddleware] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        timeout: float = 30.0
+    ) -> 'AsyncAPIClient':
+        """
+        Create an async API client.
+        
+        Args:
+            auth_middleware: Override auth middleware (uses instance default if None)
+            rate_limiter: Override rate limiter (uses instance default if None)
+            timeout: Request timeout in seconds
+        
+        Returns:
+            AsyncAPIClient: Async API client object
+        """
+        from .async_client import AsyncAPIClient
+        return AsyncAPIClient(
+            self,
+            auth_middleware=auth_middleware or self._auth_middleware,
+            rate_limiter=rate_limiter or self._rate_limiter,
+            timeout=timeout
+        )
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get current metrics.
+        
+        Returns:
+            Dict with global metrics, endpoint metrics, and recent requests
+        """
+        if not self._metrics_collector:
+            return {"error": "Metrics collection is disabled"}
+        
+        return {
+            "global": self._metrics_collector.get_global_metrics(),
+            "endpoints": self._metrics_collector.get_endpoint_metrics(),
+            "errors": self._metrics_collector.get_error_summary(),
+            "recent": self._metrics_collector.get_recent_metrics(20)
+        }
     
     def handle_restart(self, tab_id: str, url: str, method: str = "GET", **kwargs) -> Tuple[requests.Response, str]:
         """
@@ -579,16 +698,76 @@ class APIContextMemory:
 
 
 class APIClient:
-    """API client with context recording."""
+    """
+    API client with context recording, authentication, and rate limiting.
     
-    def __init__(self, api_memory: APIContextMemory):
+    Features:
+    - Automatic interaction recording
+    - Authentication middleware support
+    - Rate limiting
+    - Metrics collection
+    - Retry handling
+    """
+    
+    def __init__(
+        self,
+        api_memory: APIContextMemory,
+        auth_middleware: Optional[AuthMiddleware] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        metrics_collector: Optional[MetricsCollector] = None,
+        retry_handler: Optional[RetryHandler] = None
+    ):
         """
         Initialize API client.
         
         Args:
             api_memory: APIContextMemory instance
+            auth_middleware: Optional authentication middleware
+            rate_limiter: Optional rate limiter
+            metrics_collector: Optional metrics collector
+            retry_handler: Optional retry handler for rate limit retries
         """
         self.api_memory = api_memory
+        self._auth_middleware = auth_middleware
+        self._rate_limiter = rate_limiter
+        self._metrics_collector = metrics_collector
+        self._retry_handler = retry_handler or RetryHandler(max_retries=3)
+    
+    def _apply_auth(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """Apply authentication middleware if configured."""
+        if self._auth_middleware:
+            return self._auth_middleware.apply(headers)
+        return headers
+    
+    def _check_rate_limit(self, url: str) -> Tuple[bool, float]:
+        """Check rate limit and return (allowed, wait_time)."""
+        if self._rate_limiter:
+            return self._rate_limiter.acquire(url)
+        return True, 0.0
+    
+    def _record_metric(
+        self,
+        url: str,
+        method: str,
+        status_code: int,
+        response_time_ms: float,
+        request_size: int,
+        response_size: int,
+        error: Optional[str] = None
+    ) -> None:
+        """Record request metric."""
+        if self._metrics_collector:
+            metric = RequestMetric(
+                url=url,
+                method=method,
+                status_code=status_code,
+                response_time_ms=response_time_ms,
+                request_size=request_size,
+                response_size=response_size,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                error=error
+            )
+            self._metrics_collector.record(metric)
     
     def request(self, session_id: str, method: str, url: str, **kwargs) -> requests.Response:
         """
@@ -603,44 +782,84 @@ class APIClient:
         Returns:
             requests.Response: Response object
         """
-        # Prepare request data for recording
+        # Check rate limit
+        allowed, wait_time = self._check_rate_limit(url)
+        if not allowed:
+            if self._retry_handler:
+                self._retry_handler.wait(0, wait_time)
+                allowed, wait_time = self._check_rate_limit(url)
+                if not allowed:
+                    raise Exception(f"Rate limit exceeded for {url}")
+            else:
+                time.sleep(wait_time)
+        
+        # Apply authentication
+        headers = kwargs.pop("headers", {})
+        headers = self._apply_auth(headers)
+        
+        # Prepare request data for recording (exclude auth headers for security)
         request_data = {
             "method": method,
             "url": url,
-            "headers": kwargs.get("headers", {}),
+            "headers": {k: v for k, v in headers.items() if k.lower() != "authorization"},
             "params": kwargs.get("params", {}),
-            "data": kwargs.get("data", {}),
+            "data": str(kwargs.get("data", {})),
             "json": kwargs.get("json", {})
         }
         
-        # Make the request
-        try:
-            response = requests.request(method, url, **kwargs)
-            
-            # Prepare response data for recording
-            response_data = {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "content_type": response.headers.get("Content-Type", ""),
-                "content_length": len(response.content),
-                "text": response.text
-            }
-            
-            # Record the interaction
-            self.api_memory.record_interaction(session_id, request_data, response_data)
-            
-            return response
+        # Calculate request size
+        request_size = len(str(request_data))
         
-        except Exception as e:
-            # Record the error
-            error_data = {
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-            self.api_memory.record_interaction(session_id, request_data, error_data)
+        # Make the request with timing
+        with PerformanceTimer() as timer:
+            try:
+                response = requests.request(method, url, headers=headers, **kwargs)
+                
+                # Prepare response data for recording
+                response_data = {
+                    "status_code": response.status_code,
+                    "headers": dict(response.headers),
+                    "content_type": response.headers.get("Content-Type", ""),
+                    "content_length": len(response.content),
+                    "text": response.text
+                }
+                
+                # Record the interaction
+                self.api_memory.record_interaction(session_id, request_data, response_data)
+                
+                # Record metric
+                self._record_metric(
+                    url=url,
+                    method=method,
+                    status_code=response.status_code,
+                    response_time_ms=timer.elapsed_ms,
+                    request_size=request_size,
+                    response_size=len(response.content)
+                )
+                
+                return response
             
-            logger.error(f"Request failed: {str(e)}")
-            raise
+            except Exception as e:
+                # Record the error
+                error_data = {
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
+                self.api_memory.record_interaction(session_id, request_data, error_data)
+                
+                # Record error metric
+                self._record_metric(
+                    url=url,
+                    method=method,
+                    status_code=0,
+                    response_time_ms=timer.elapsed_ms,
+                    request_size=request_size,
+                    response_size=0,
+                    error=str(e)
+                )
+                
+                logger.error(f"Request failed: {str(e)}")
+                raise
     
     def get(self, session_id: str, url: str, **kwargs) -> requests.Response:
         """

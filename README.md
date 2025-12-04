@@ -2,6 +2,8 @@
 
 A streamlined library for recording, analyzing, and maintaining context across API interactions.
 
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/KOdali-abhi/Api-context?utm_source=oss&utm_medium=github&utm_campaign=KOdali-abhi%2FApi-context&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 ## Overview
 
 The API Context Memory System provides an intuitive interface for managing API interactions. It helps you maintain context across multiple API calls, debug issues, and optimize your API usage patterns.
@@ -10,10 +12,18 @@ The API Context Memory System provides an intuitive interface for managing API i
 
 ```bash
 pip install api-context-memory
+
+# With Redis support
+pip install api-context-memory[redis]
 ```
 
 
+# With async support
+pip install api-context-memory[async]
 
+# With all optional dependencies
+pip install api-context-memory[all]
+```
 
 ## Quick Start
 
@@ -50,6 +60,14 @@ print(f"Total errors: {len(errors)}")
 - **Memory Transfer**: Allows sharing context between different tabs/sessions
 - **Error Tracking**: Identifies and categorizes errors for easier debugging
 - **Simple API**: Intuitive interface that follows expected patterns
+
+### Production-Ready Features (v0.3.0)
+
+- **Multiple Storage Backends**: Memory, File, and Redis storage options
+- **Authentication Middleware**: Bearer token, API key, Basic auth, OAuth2, and custom headers
+- **Rate Limiting**: Token bucket, sliding window, and per-endpoint rate limiting
+- **Async Support**: Async HTTP client with batch request support using aiohttp
+- **Metrics & Logging**: Request metrics, performance timing, and structured logging
 
 ## Core Concepts
 
@@ -435,6 +453,201 @@ Make a PATCH request.
        print(f"Error: {error['response'].get('error')}")
        print(f"Error Type: {error['response'].get('error_type')}")
    ```
+
+## Production Features
+
+### Storage Backends
+
+Choose between memory, file, or Redis storage:
+
+```python
+from api_context_memory import APIContextMemory
+
+# Memory storage (default)
+api_memory = APIContextMemory()
+
+# File storage
+api_memory = APIContextMemory(storage_type="file", file_path="./api_data.json")
+
+# Redis storage (requires redis package)
+api_memory = APIContextMemory(
+    storage_type="redis",
+    redis_config={
+        "host": "localhost",
+        "port": 6379,
+        "db": 0,
+        "password": "your-password",  # optional
+        "prefix": "api_context:"
+    }
+)
+```
+
+### Authentication Middleware
+
+Add authentication to all requests:
+
+```python
+from api_context_memory import (
+    APIContextMemory,
+    BearerTokenAuth,
+    APIKeyAuth,
+    BasicAuth,
+    OAuth2Auth,
+    ChainedAuth
+)
+
+# Bearer token authentication
+auth = BearerTokenAuth("your-token")
+api_memory = APIContextMemory(auth_middleware=auth)
+
+# API key authentication
+auth = APIKeyAuth("your-api-key", header_name="X-API-Key")
+api_memory = APIContextMemory(auth_middleware=auth)
+
+# Basic authentication
+auth = BasicAuth("username", "password")
+api_memory = APIContextMemory(auth_middleware=auth)
+
+# OAuth2 with token refresh
+auth = OAuth2Auth(
+    access_token="your-access-token",
+    refresh_token="your-refresh-token",
+    token_url="https://auth.example.com/token",
+    client_id="your-client-id",
+    client_secret="your-client-secret"
+)
+api_memory = APIContextMemory(auth_middleware=auth)
+
+# Chain multiple auth methods
+auth = ChainedAuth(
+    APIKeyAuth("api-key", header_name="X-API-Key"),
+    BearerTokenAuth("bearer-token")
+)
+api_memory = APIContextMemory(auth_middleware=auth)
+```
+
+### Rate Limiting
+
+Control request frequency:
+
+```python
+from api_context_memory import (
+    APIContextMemory,
+    TokenBucketRateLimiter,
+    SlidingWindowRateLimiter,
+    EndpointRateLimiter
+)
+
+# Token bucket rate limiter (10 requests/second, burst of 20)
+limiter = TokenBucketRateLimiter(rate=10.0, capacity=20)
+api_memory = APIContextMemory(rate_limiter=limiter)
+
+# Sliding window rate limiter (100 requests per minute)
+limiter = SlidingWindowRateLimiter(max_requests=100, window_seconds=60)
+api_memory = APIContextMemory(rate_limiter=limiter)
+
+# Per-endpoint rate limiting
+limiter = EndpointRateLimiter(
+    default_rate=10,
+    default_capacity=10,
+    endpoint_configs={
+        "api.example.com/v1/slow": {"rate": 1, "capacity": 1},
+        "api.example.com/v1/fast": {"rate": 100, "capacity": 50}
+    }
+)
+api_memory = APIContextMemory(rate_limiter=limiter)
+```
+
+### Async Support
+
+Make concurrent requests with async client:
+
+```python
+import asyncio
+from api_context_memory import APIContextMemory
+
+async def main():
+    api_memory = APIContextMemory()
+    tab = api_memory.create_tab()
+    session_id = tab["session_id"]
+    
+    # Create async client
+    async with api_memory.create_async_client() as client:
+        # Single request
+        response = await client.get(session_id, "https://api.example.com/data")
+        
+        # Batch requests (concurrent)
+        requests = [
+            {"url": "https://api.example.com/users/1"},
+            {"url": "https://api.example.com/users/2"},
+            {"url": "https://api.example.com/users/3"},
+        ]
+        results = await client.batch_requests(session_id, requests, max_concurrent=10)
+
+asyncio.run(main())
+```
+
+### Metrics and Logging
+
+Track API performance:
+
+```python
+from api_context_memory import APIContextMemory, MetricsCollector
+
+# Enable metrics (enabled by default)
+api_memory = APIContextMemory(enable_metrics=True)
+
+# Make some requests...
+tab = api_memory.create_tab()
+client = api_memory.create_client()
+# ... make requests ...
+
+# Get metrics
+metrics = api_memory.get_metrics()
+print(f"Total requests: {metrics['global']['total_requests']}")
+print(f"Success rate: {metrics['global']['success_rate_percent']}%")
+print(f"Avg response time: {metrics['global']['avg_response_time_ms']}ms")
+
+# Get endpoint-specific metrics
+for endpoint, stats in metrics['endpoints'].items():
+    print(f"{endpoint}: {stats['total_requests']} requests")
+
+# Get error summary
+errors = metrics['errors']
+print(f"Total errors: {errors['total_errors']}")
+```
+
+### Complete Production Example
+
+```python
+from api_context_memory import (
+    APIContextMemory,
+    BearerTokenAuth,
+    TokenBucketRateLimiter,
+)
+
+# Initialize with all production features
+api_memory = APIContextMemory(
+    storage_type="redis",
+    redis_config={"host": "localhost", "port": 6379},
+    auth_middleware=BearerTokenAuth("your-api-token"),
+    rate_limiter=TokenBucketRateLimiter(rate=10, capacity=20),
+    enable_metrics=True
+)
+
+# Create tab and client
+tab = api_memory.create_tab(metadata={"name": "Production API"})
+session_id = tab["session_id"]
+client = api_memory.create_client()
+
+# Make requests (automatically authenticated and rate-limited)
+response = client.get(session_id, "https://api.example.com/data")
+
+# Check metrics
+metrics = api_memory.get_metrics()
+print(f"Requests: {metrics['global']['total_requests']}")
+print(f"Success rate: {metrics['global']['success_rate_percent']}%")
+```
 
 ## License
 
