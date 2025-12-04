@@ -11,11 +11,7 @@ The API Context Memory System provides an intuitive interface for managing API i
 ```bash
 pip install api-context-memory
 ```
-## Coderabbit
 
-Consider adding the "CodeRabbit Pull Request Reviews" badge to your repository to showcase automated pull request reviews. Copy the snippet below and paste it into your README.md file.
-cr-badge-Api-context
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/KOdali-abhi/Api-context?utm_source=oss&utm_medium=github&utm_campaign=KOdali-abhi%2FApi-context&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
 
 
