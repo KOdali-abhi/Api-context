@@ -2,7 +2,7 @@
 
 A streamlined library for recording, analyzing, and maintaining context across API interactions.
 
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/KOdali-abhi/Api-context?utm_source=oss&utm_medium=github&utm_campaign=KOdali-abhi%2FApi-context&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 
 ## Overview
 
