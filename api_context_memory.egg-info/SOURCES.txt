@@ -1,3 +1,4 @@
+LICENSE
 README.md
 setup.py
 api_context_memory/__init__.py
