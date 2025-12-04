@@ -15,6 +15,8 @@ pip install api-context-memory
 
 # With Redis support
 pip install api-context-memory[redis]
+```
+
 
 # With async support
 pip install api-context-memory[async]
